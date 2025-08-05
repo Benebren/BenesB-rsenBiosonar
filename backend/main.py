@@ -6,6 +6,17 @@ from indicators import compute_indicators
 from scoring import evaluate_conditions, score_from_conditions
 
 app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # oder explizit ["https://deine-vercel-url.vercel.app"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health():
