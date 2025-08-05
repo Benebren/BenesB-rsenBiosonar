@@ -1,32 +1,40 @@
 import pandas as pd
-import pandas_ta as ta
+from ta.trend import EMAIndicator, ADXIndicator, MACD
+from ta.momentum import RSIIndicator, StochasticOscillator
+from ta.volatility import BollingerBands
+from ta.volume import OnBalanceVolumeIndicator
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    # Basic sanity
-    if df.isna().all().any():
-        df = df.dropna()
+    df = df.copy().dropna()
+
     # EMAs
-    df['ema50'] = ta.ema(df['Close'], length=50)
-    df['ema200'] = ta.ema(df['Close'], length=200)
+    df["ema50"] = EMAIndicator(close=df["Close"], window=50).ema_indicator()
+    df["ema200"] = EMAIndicator(close=df["Close"], window=200).ema_indicator()
+
     # RSI
-    df['rsi14'] = ta.rsi(df['Close'], length=14)
+    df["rsi14"] = RSIIndicator(close=df["Close"], window=14).rsi()
+
     # MACD
-    macd = ta.macd(df['Close'], fast=12, slow=26, signal=9)
-    df['macd'] = macd['MACD_12_26_9']
-    df['macd_signal'] = macd['MACDs_12_26_9']
-    # Bollinger Bands
-    bb = ta.bbands(df['Close'], length=20, std=2)
-    df['bb_upper'] = bb['BBU_20_2.0']
-    df['bb_middle'] = bb['BBM_20_2.0']
-    df['bb_lower'] = bb['BBL_20_2.0']
+    macd = MACD(close=df["Close"], window_slow=26, window_fast=12, window_sign=9)
+    df["macd"] = macd.macd()
+    df["macd_signal"] = macd.macd_signal()
+
+    # Bollinger
+    bb = BollingerBands(close=df["Close"], window=20, window_dev=2)
+    df["bb_upper"] = bb.bollinger_hband()
+    df["bb_middle"] = bb.bollinger_mavg()
+    df["bb_lower"] = bb.bollinger_lband()
+
     # ADX
-    adx = ta.adx(df['High'], df['Low'], df['Close'], length=14)
-    df['adx14'] = adx['ADX_14']
+    adx = ADXIndicator(high=df["High"], low=df["Low"], close=df["Close"], window=14)
+    df["adx14"] = adx.adx()
+
     # OBV
-    df['obv'] = ta.obv(df['Close'], df['Volume'])
+    df["obv"] = OnBalanceVolumeIndicator(close=df["Close"], volume=df["Volume"]).on_balance_volume()
+
     # Stochastic
-    stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=14, d=3, smooth_k=3)
-    df['stoch_k'] = stoch['STOCHk_14_3_3']
-    df['stoch_d'] = stoch['STOCHd_14_3_3']
+    st = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"], window=14, smooth_window=3)
+    df["stoch_k"] = st.stoch()
+    df["stoch_d"] = st.stoch_signal()
+
     return df.dropna()
