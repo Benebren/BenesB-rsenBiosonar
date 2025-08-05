@@ -29,7 +29,7 @@ def health():
     return {"status": "ok"}
 
 def analyze_symbol(symbol: str) -> Dict[str, Any]:
-   hist = yf.download(symbol, period="1y", interval="1d", progress=False)
+    hist = yf.download(symbol, period="1y", interval="1d", progress=False)
     if hist is None or hist.empty or len(hist) < 220:
         return {"symbol": symbol, "error": "not_enough_data"}
 
