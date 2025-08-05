@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Query
 from typing import List, Dict, Any
-import yfinance as yf
+import requests
 import pandas as pd
 from indicators import compute_indicators
 from scoring import evaluate_conditions, score_from_conditions
@@ -28,18 +28,45 @@ app.add_middleware(
 def health():
     return {"status": "ok"}
 
-def analyze_symbol(symbol: str) -> Dict[str, Any]:
-    hist = yf.download(symbol, period="1y", interval="1d", progress=False)
-    if hist is None or hist.empty or len(hist) < 220:
-        return {"symbol": symbol, "error": "not_enough_data"}
+API_KEY = "92f06ae57fa0459086049b49161765e1"
 
-    df = hist.rename(columns=str.title)
+def analyze_symbol(symbol: str) -> Dict[str, Any]:
+    url = f"https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": symbol,
+        "interval": "1day",
+        "outputsize": 500,
+        "apikey": API_KEY,
+    }
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    if "values" not in data or not data["values"]:
+        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": 0}}
+
+    df = pd.DataFrame(data["values"])
+    df = df.rename(columns={
+        "datetime": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+    })
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+    df[["Open", "High", "Low", "Close", "Volume"]] = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
+
+    if len(df) < 220:
+        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": len(df)}}
+
     df = compute_indicators(df)
     if len(df) < 2:
-        return {"symbol": symbol, "error": "not_enough_data"}
+        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": len(df)}}
 
     prev = df.iloc[-2]
     curr = df.iloc[-1]
+
     flags = evaluate_conditions(prev, curr)
     score = score_from_conditions(flags)
 
@@ -49,6 +76,7 @@ def analyze_symbol(symbol: str) -> Dict[str, Any]:
         "score": score,
         "conditions": flags,
     }
+
 
 @app.get("/analyze")
 def analyze(symbols: str = Query(..., description="Comma separated tickers, e.g. AAPL,BTC-USD")):
