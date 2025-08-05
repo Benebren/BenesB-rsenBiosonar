@@ -70,15 +70,29 @@ app.add_middleware(
 def health():
     return {"status": "ok"}
 
-def analyze_symbol(symbol: str) -> Dict[str, Any]:
-    hist = yf.download(symbol, period="6mo", interval="1d", progress=False)
-    if hist is None or hist.empty or len(hist) < 220:
-        return {"symbol": symbol, "error": "not_enough_data"}
+from datetime import datetime, timedelta
 
-    df = hist.rename(columns=str.title)  # Ensure 'Open','High','Low','Close','Volume'
+def _fetch_history(symbol: str) -> pd.DataFrame:
+    df = yf.download(symbol, period="2y", interval="1d", progress=False)
+    if df is not None and not df.empty:
+        return df
+
+    start = (datetime.utcnow() - timedelta(days=800)).strftime("%Y-%m-%d")
+    end = datetime.utcnow().strftime("%Y-%m-%d")
+    df = yf.download(symbol, start=start, end=end, interval="1d", progress=False)
+    return df if df is not None else pd.DataFrame()
+
+def analyze_symbol(symbol: str) -> Dict[str, Any]:
+    hist = _fetch_history(symbol)
+
+    debug = {"rows": int(len(hist))}
+    if hist is None or hist.empty or len(hist) < 220:
+        return {"symbol": symbol, "error": "not_enough_data", "debug": debug}
+
+    df = hist.rename(columns=str.title)
     df = compute_indicators(df)
     if len(df) < 2:
-        return {"symbol": symbol, "error": "not_enough_data"}
+        return {"symbol": symbol, "error": "not_enough_data", "debug": debug}
 
     prev = df.iloc[-2]
     curr = df.iloc[-1]
@@ -91,7 +105,9 @@ def analyze_symbol(symbol: str) -> Dict[str, Any]:
         "price": float(curr["Close"]),
         "score": score,
         "conditions": flags,
+        "debug": debug
     }
+
 
 @app.get("/analyze")
 def analyze(symbols: str = Query(..., description="Comma separated tickers, e.g. AAPL,BTC-USD")):
