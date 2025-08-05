@@ -1,94 +1,20 @@
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
 import requests
 import pandas as pd
 from indicators import compute_indicators
 from scoring import evaluate_conditions, score_from_conditions
-from fastapi.middleware.cors import CORSMiddleware
+
+Twelve_API_KEY = "92f06ae57fa0459086049b49161765e1"
+BASE_URL = "https://api.twelvedata.com/time_series"
 
 app = FastAPI()
 
-# Erlaubte Frontend-Origins explizit eintragen (empfohlen)
-ALLOWED_ORIGINS = [
-    "https://benes-b-rsen-biosonar.vercel.app",
-    "https://benes-b-rsen-biosonar-*.vercel.app",  # Preview-Deployments
-    "http://localhost:3000",
-    "http://localhost:5173",
-]
-
+# CORS-Freigabe für Vercel und allgemein
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,   # statt ["*"]
-    allow_credentials=True,          # ok, weil Origins jetzt explizit
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-API_KEY = "92f06ae57fa0459086049b49161765e1"
-
-def analyze_symbol(symbol: str) -> Dict[str, Any]:
-    url = f"https://api.twelvedata.com/time_series"
-    params = {
-        "symbol": symbol,
-        "interval": "1day",
-        "outputsize": 500,
-        "apikey": API_KEY,
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-
-    if "values" not in data or not data["values"]:
-        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": 0}}
-
-    df = pd.DataFrame(data["values"])
-    df = df.rename(columns={
-        "datetime": "Date",
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "volume": "Volume",
-    })
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.sort_values("Date").reset_index(drop=True)
-    df[["Open", "High", "Low", "Close", "Volume"]] = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
-
-    if len(df) < 220:
-        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": len(df)}}
-
-    df = compute_indicators(df)
-    if len(df) < 2:
-        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": len(df)}}
-
-    prev = df.iloc[-2]
-    curr = df.iloc[-1]
-
-    flags = evaluate_conditions(prev, curr)
-    score = score_from_conditions(flags)
-
-    return {
-        "symbol": symbol,
-        "price": float(curr["Close"]),
-        "score": score,
-        "conditions": flags,
-    }
-
-
-@app.get("/analyze")
-def analyze(symbols: str = Query(..., description="Comma separated tickers, e.g. AAPL,BTC-USD")):
-    syms = [s.strip() for s in symbols.split(",") if s.strip()]
-    results = [analyze_symbol(s) for s in syms]
-    sorted_res = sorted(results, key=lambda x: x.get("score", -1), reverse=True)
-    return {"results": sorted_res}
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # oder explizit ["https://deine-vercel-url.vercel.app"]
+    allow_origins=["*", "https://benes-b-rsen-biosonar-7safv7pvz-benebrens-projects.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,29 +24,39 @@ app.add_middleware(
 def health():
     return {"status": "ok"}
 
-from datetime import datetime, timedelta
+def fetch_history(symbol: str) -> pd.DataFrame:
+    params = {
+        "symbol": symbol,
+        "interval": "1day",
+        "outputsize": 300,
+        "apikey": Twelve_API_KEY
+    }
+    response = requests.get(BASE_URL, params=params)
+    data = response.json()
 
-def _fetch_history(symbol: str) -> pd.DataFrame:
-    df = yf.download(symbol, period="2y", interval="1d", progress=False)
-    if df is not None and not df.empty:
-        return df
+    if "values" not in data:
+        return pd.DataFrame()
 
-    start = (datetime.utcnow() - timedelta(days=800)).strftime("%Y-%m-%d")
-    end = datetime.utcnow().strftime("%Y-%m-%d")
-    df = yf.download(symbol, start=start, end=end, interval="1d", progress=False)
-    return df if df is not None else pd.DataFrame()
+    df = pd.DataFrame(data["values"])
+    df = df.rename(columns={
+        "datetime": "Date", "open": "Open", "high": "High",
+        "low": "Low", "close": "Close", "volume": "Volume"
+    })
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date")
+    df[["Open", "High", "Low", "Close", "Volume"]] = df[
+        ["Open", "High", "Low", "Close", "Volume"]
+    ].astype(float)
+    return df
 
 def analyze_symbol(symbol: str) -> Dict[str, Any]:
-    hist = _fetch_history(symbol)
+    df = fetch_history(symbol)
+    if df is None or df.empty or len(df) < 50:
+        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": len(df)}}
 
-    debug = {"rows": int(len(hist))}
-    if hist is None or hist.empty or len(hist) < 220:
-        return {"symbol": symbol, "error": "not_enough_data", "debug": debug}
-
-    df = hist.rename(columns=str.title)
     df = compute_indicators(df)
     if len(df) < 2:
-        return {"symbol": symbol, "error": "not_enough_data", "debug": debug}
+        return {"symbol": symbol, "error": "not_enough_data", "debug": {"rows": len(df)}}
 
     prev = df.iloc[-2]
     curr = df.iloc[-1]
@@ -133,12 +69,11 @@ def analyze_symbol(symbol: str) -> Dict[str, Any]:
         "price": float(curr["Close"]),
         "score": score,
         "conditions": flags,
-        "debug": debug
+        "debug": {"rows": len(df)}
     }
 
-
 @app.get("/analyze")
-def analyze(symbols: str = Query(..., description="Comma separated tickers, e.g. AAPL,BTC-USD")):
+def analyze(symbols: str = Query(..., description="Comma separated tickers, e.g. AAPL,BTC/USD")):
     syms = [s.strip() for s in symbols.split(",") if s.strip()]
     results = [analyze_symbol(s) for s in syms]
     sorted_res = sorted(results, key=lambda x: x.get("score", -1), reverse=True)
