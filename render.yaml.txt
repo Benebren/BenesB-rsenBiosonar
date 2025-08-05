@@ -3,8 +3,10 @@ services:
     name: benesboersenbiosonar-backend
     env: python
     region: frankfurt
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     rootDir: backend
     plan: free
-
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
